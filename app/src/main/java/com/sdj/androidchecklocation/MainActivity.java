@@ -2,10 +2,14 @@ package com.sdj.androidchecklocation;
 
 import android.Manifest;
 import android.app.ActivityManager;
+import android.content.BroadcastReceiver;
 import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
+import android.database.ContentObserver;
 import android.location.Criteria;
 import android.location.Location;
 import android.location.LocationManager;
@@ -17,25 +21,25 @@ import android.provider.Settings;
 import android.support.annotation.RequiresApi;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
+import android.text.TextUtils;
 import android.util.Log;
 import android.view.View;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import com.tbruyelle.rxpermissions2.RxPermissions;
-
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 
-import io.reactivex.functions.Consumer;
+import static android.location.LocationManager.MODE_CHANGED_ACTION;
+import static android.location.LocationManager.PROVIDERS_CHANGED_ACTION;
 
 public class MainActivity extends AppCompatActivity {
     private static final String TAG = MainActivity.class.getSimpleName();
     private boolean hasAddTestProvider = false;
-    private LocationManager locationManager;
     private String[] locationPermissions = new String[]{Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION};
     private TextView mTextTv;
+    private LocationManager mLocationManager;
 
     @RequiresApi(api = Build.VERSION_CODES.CUPCAKE)
     @Override
@@ -78,7 +82,56 @@ public class MainActivity extends AppCompatActivity {
                 }, 100);
             }
         });
+        mLocationManager = (LocationManager) getSystemService(LOCATION_SERVICE);
+
+        findViewById(R.id.gpsMonitorTv).setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                startActivity(new Intent(MainActivity.this, GpsMonitorActivity.class));
+            }
+        });
+        IntentFilter intentFilter = new IntentFilter();
+        intentFilter.addAction(LocationManager.MODE_CHANGED_ACTION);
+        intentFilter.addAction(LocationManager.PROVIDERS_CHANGED_ACTION);
+        registerReceiver(mGpsStateReceiver, intentFilter);
     }
+
+    @Override
+    protected void onStart() {
+        super.onStart();
+        GpsMonitor.getInstance().addListener(getLocalClassName(), onGpsMonitorChangedListener).registerGpsMonitor(this);
+    }
+
+    private BroadcastReceiver mGpsStateReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            if (!TextUtils.isEmpty(intent.getAction())) {
+                if (intent.getAction().equalsIgnoreCase(MODE_CHANGED_ACTION)
+                        || intent.getAction().equalsIgnoreCase(PROVIDERS_CHANGED_ACTION)) {
+                    Toast.makeText(MainActivity.this, "Gps state changed", Toast.LENGTH_SHORT).show();
+                }
+            }
+        }
+    };
+
+    @Override
+    protected void onStop() {
+        super.onStop();
+        GpsMonitor.getInstance().removeListener(getLocalClassName());
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        unregisterReceiver(mGpsStateReceiver);
+    }
+
+    private GpsMonitor.onGpsMonitorChangedListener onGpsMonitorChangedListener = new GpsMonitor.onGpsMonitorChangedListener() {
+        @Override
+        public void onMonitorChanged(boolean enabled) {
+            Log.i("MainActivity", enabled + "");
+        }
+    };
 
     private boolean isUsedMockLocation() {
         boolean isUsedMockLocation = false;
@@ -187,9 +240,9 @@ public class MainActivity extends AppCompatActivity {
         if (canMockPosition && hasAddTestProvider == false) {
             try {
                 String providerStr = LocationManager.GPS_PROVIDER;
-                LocationProvider provider = locationManager.getProvider(providerStr);
+                LocationProvider provider = mLocationManager.getProvider(providerStr);
                 if (provider != null) {
-                    locationManager.addTestProvider(
+                    mLocationManager.addTestProvider(
                             provider.getName()
                             , provider.requiresNetwork()
                             , provider.requiresSatellite()
@@ -201,13 +254,13 @@ public class MainActivity extends AppCompatActivity {
                             , provider.getPowerRequirement()
                             , provider.getAccuracy());
                 } else {
-                    locationManager.addTestProvider(
+                    mLocationManager.addTestProvider(
                             providerStr
                             , true, true, false, false, true, true, true
                             , Criteria.POWER_HIGH, Criteria.ACCURACY_FINE);
                 }
-                locationManager.setTestProviderEnabled(providerStr, true);
-                locationManager.setTestProviderStatus(providerStr, LocationProvider.AVAILABLE, null, System.currentTimeMillis());
+                mLocationManager.setTestProviderEnabled(providerStr, true);
+                mLocationManager.setTestProviderStatus(providerStr, LocationProvider.AVAILABLE, null, System.currentTimeMillis());
 
                 // 模拟位置可用
                 hasAddTestProvider = true;
@@ -244,7 +297,7 @@ public class MainActivity extends AppCompatActivity {
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) {
                             mockLocation.setElapsedRealtimeNanos(SystemClock.elapsedRealtimeNanos());
                         }
-                        locationManager.setTestProviderLocation(providerStr, mockLocation);
+                        mLocationManager.setTestProviderLocation(providerStr, mockLocation);
                     } catch (Exception e) {
                         // 防止用户在软件运行过程中关闭模拟位置或选择其他应用
                         stopMockLocation();
@@ -266,7 +319,7 @@ public class MainActivity extends AppCompatActivity {
     public void stopMockLocation() {
         if (hasAddTestProvider) {
             try {
-                locationManager.removeTestProvider(LocationManager.GPS_PROVIDER);
+                mLocationManager.removeTestProvider(LocationManager.GPS_PROVIDER);
             } catch (Exception ex) {
                 // 若未成功addTestProvider，或者系统模拟位置已关闭则必然会出错
             }
